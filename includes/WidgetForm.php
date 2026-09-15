@@ -2,6 +2,8 @@
 
 namespace Modules\SwitchWidget\Includes;
 
+use CWidgetsData;
+use Zabbix\Widgets\CWidgetField;
 use Zabbix\Widgets\CWidgetForm;
 use Zabbix\Widgets\Fields\CWidgetFieldMultiSelectHost;
 use Zabbix\Widgets\Fields\CWidgetFieldSelect;
@@ -31,6 +33,14 @@ class WidgetForm extends CWidgetForm {
 		$this->addField(
 			(new CWidgetFieldMultiSelectHost('hostids', _('Host')))
 				->setMultiple(false)
+				->setDefault($this->isTemplateDashboard()
+					? [
+						CWidgetField::FOREIGN_REFERENCE_KEY => CWidgetField::createTypedReference(
+							CWidgetField::REFERENCE_DASHBOARD, CWidgetsData::DATA_TYPE_HOST_ID
+						)
+					]
+					: []
+				)
 		);
 
 		$this->addField(
@@ -108,6 +118,12 @@ class WidgetForm extends CWidgetForm {
 		$this->addField(
 			(new CWidgetFieldTextBox('speed_item_pattern', _('Speed item pattern')))
 				->setDefault(self::DEFAULT_SPEED_PATTERN)
+		);
+		$this->addField(
+			(new CWidgetFieldSelect('speed_unit_mode', _('Speed data unit'), [
+				0 => _('Mbps (×1,000,000 → b/s)'),
+				1 => _('b/s (bits per second)')
+			]))->setDefault(0)
 		);
 		$this->addField(
 			(new CWidgetFieldTextBox('utilization_low_threshold', _('Utilization low threshold (%)')))
@@ -242,6 +258,20 @@ class WidgetForm extends CWidgetForm {
 		}
 
 		return $this;
+	}
+
+	public function validate(bool $strict = false): array {
+		// On template dashboards, bind Host to the dashboard host context so the
+		// widget receives the linked host when rendered on a host dashboard.
+		if ($strict && $this->isTemplateDashboard()) {
+			$this->getField('hostids')->setValue([
+				CWidgetField::FOREIGN_REFERENCE_KEY => CWidgetField::createTypedReference(
+					CWidgetField::REFERENCE_DASHBOARD, CWidgetsData::DATA_TYPE_HOST_ID
+				)
+			]);
+		}
+
+		return parent::validate($strict);
 	}
 
 	private function getRequestedInt(string $key, int $default): int {

@@ -20,6 +20,8 @@ class WidgetView extends CControllerDashboardWidgetView {
 	private const DEFAULT_OUT_DISCARDS_PATTERN = 'ifOutDiscards[*]';
 	private const TRAFFIC_UNIT_BYTES = 0;
 	private const TRAFFIC_UNIT_BITS = 1;
+	private const SPEED_UNIT_MBPS = 0;
+	private const SPEED_UNIT_BITS = 1;
 	private const MAX_SPEED_PATTERN_LENGTH = 40;
 	private const TRAFFIC_POINTS = 24;
 	private const TRAFFIC_LOOKBACK_SECONDS = 1800;
@@ -31,24 +33,31 @@ class WidgetView extends CControllerDashboardWidgetView {
 	private const MAX_PORTS_PER_ROW = 48;
 	private const MAX_SFP_PORTS = 32;
 	private const MAX_TOTAL_PORTS = 96;
+	private const MAX_INTERFACE_INDEX = 2147483647;
+
+	private array $host_item_keys_cache = [];
 	protected function doAction(): void {
 		$layout = $this->getLayout();
-		$hostid = $this->extractHostId();
+		$host = $this->getResolvedHost();
+		$hostid = $host !== null ? (string) ($host['hostid'] ?? '') : $this->extractHostId();
 		$traffic_in_pattern = $this->sanitizeItemPattern((string) ($this->fields_values['traffic_in_item_pattern'] ?? self::DEFAULT_TRAFFIC_IN_PATTERN), self::DEFAULT_TRAFFIC_IN_PATTERN);
 		$traffic_out_pattern = $this->sanitizeItemPattern((string) ($this->fields_values['traffic_out_item_pattern'] ?? self::DEFAULT_TRAFFIC_OUT_PATTERN), self::DEFAULT_TRAFFIC_OUT_PATTERN);
 		$port_index_start = $this->clamp(
 			$this->extractNonNegativeInt($this->fields_values['port_index_start'] ?? self::DEFAULT_PORT_INDEX_START),
 			0,
-			100000
+			self::MAX_INTERFACE_INDEX
 		);
 		$sfp_index_start = $this->clamp(
 			$this->extractNonNegativeInt($this->fields_values['sfp_index_start'] ?? self::DEFAULT_SFP_INDEX_START),
 			0,
-			100000
+			self::MAX_INTERFACE_INDEX
 		);
 		$traffic_unit_mode = ((int) ($this->fields_values['traffic_unit_mode'] ?? self::TRAFFIC_UNIT_BYTES)) === self::TRAFFIC_UNIT_BITS
 			? self::TRAFFIC_UNIT_BITS
 			: self::TRAFFIC_UNIT_BYTES;
+		$speed_unit_mode = ((int) ($this->fields_values['speed_unit_mode'] ?? self::SPEED_UNIT_MBPS)) === self::SPEED_UNIT_BITS
+			? self::SPEED_UNIT_BITS
+			: self::SPEED_UNIT_MBPS;
 		$speed_pattern = $this->sanitizeItemPattern((string) ($this->fields_values['speed_item_pattern'] ?? self::DEFAULT_SPEED_PATTERN), self::DEFAULT_SPEED_PATTERN);
 		$in_errors_pattern = $this->sanitizeItemPattern((string) ($this->fields_values['in_errors_item_pattern'] ?? self::DEFAULT_IN_ERRORS_PATTERN), self::DEFAULT_IN_ERRORS_PATTERN);
 		$out_errors_pattern = $this->sanitizeItemPattern((string) ($this->fields_values['out_errors_item_pattern'] ?? self::DEFAULT_OUT_ERRORS_PATTERN), self::DEFAULT_OUT_ERRORS_PATTERN);
@@ -129,6 +138,7 @@ class WidgetView extends CControllerDashboardWidgetView {
 					'summary_uptime_item_key' => $summary_uptime_item_key,
 					'summary_serial_item_key' => $summary_serial_item_key,
 					'speed_item_pattern' => $speed_pattern,
+				'speed_unit_mode' => $speed_unit_mode,
 				'utilization_overlay_enabled' => $utilization_overlay_enabled,
 				'utilization_low_threshold' => $util_low_threshold,
 				'utilization_warn_threshold' => $util_warn_threshold,
@@ -138,6 +148,8 @@ class WidgetView extends CControllerDashboardWidgetView {
 				'utilization_high_color' => $util_high_color,
 				'utilization_na_color' => $util_na_color,
 				'hostid' => $hostid,
+				'host' => $host_meta,
+				'host_link' => $hostid !== '' ? 'zabbix.php?action=host.view&hostid='.$hostid : '',
 				'legend_size' => $this->clamp(
 					$this->extractPositiveInt($this->fields_values['legend_size'] ?? 14),
 					12,
@@ -165,6 +177,22 @@ class WidgetView extends CControllerDashboardWidgetView {
 
 		$trigger_meta = $this->loadTriggerMeta($ports);
 		$sfp_start_index = max(1, $layout['total_ports'] - $layout['sfp_ports'] + 1);
+		$wildcard_key_plans = $this->buildWildcardKeyPlans(
+			$hostid,
+			[
+				'traffic_in_item_key' => $traffic_in_pattern,
+				'traffic_out_item_key' => $traffic_out_pattern,
+				'speed_item_key' => $speed_pattern,
+				'speed_item_key_alt' => $speed_pattern_alt,
+				'in_errors_item_key' => $in_errors_pattern,
+				'out_errors_item_key' => $out_errors_pattern,
+				'in_discards_item_key' => $in_discards_pattern,
+				'out_discards_item_key' => $out_discards_pattern
+			],
+			$layout,
+			$port_index_start,
+			$sfp_index_start
+		);
 
 		foreach ($ports as $index => &$port) {
 			$port['is_sfp'] = ($layout['sfp_ports'] > 0 && ($index + 1) >= $sfp_start_index);
@@ -185,14 +213,66 @@ class WidgetView extends CControllerDashboardWidgetView {
 				: '';
 			$port['trigger_name'] = $meta !== null ? $meta['description'] : '';
 			$port['hostid'] = $hostid;
-			$port['traffic_in_item_key'] = $this->resolvePortItemKey($traffic_in_pattern, $mapped_port_index);
-			$port['traffic_out_item_key'] = $this->resolvePortItemKey($traffic_out_pattern, $mapped_port_index);
-			$port['speed_item_key'] = $this->resolvePortItemKey($speed_pattern, $mapped_port_index);
-			$port['speed_item_key_alt'] = $this->resolvePortItemKey($speed_pattern_alt, $mapped_port_index);
-			$port['in_errors_item_key'] = $this->resolvePortItemKey($in_errors_pattern, $mapped_port_index);
-			$port['out_errors_item_key'] = $this->resolvePortItemKey($out_errors_pattern, $mapped_port_index);
-			$port['in_discards_item_key'] = $this->resolvePortItemKey($in_discards_pattern, $mapped_port_index);
-			$port['out_discards_item_key'] = $this->resolvePortItemKey($out_discards_pattern, $mapped_port_index);
+			$port_position = $port['is_sfp']
+				? (($index + 1) - $sfp_start_index)
+				: $index;
+			$port_group = $port['is_sfp'] ? 'sfp' : 'regular';
+			$port['traffic_in_item_key'] = $this->resolvePortItemKey(
+				$traffic_in_pattern,
+				$mapped_port_index,
+				$wildcard_key_plans['traffic_in_item_key'] ?? [],
+				$port_group,
+				$port_position
+			);
+			$port['traffic_out_item_key'] = $this->resolvePortItemKey(
+				$traffic_out_pattern,
+				$mapped_port_index,
+				$wildcard_key_plans['traffic_out_item_key'] ?? [],
+				$port_group,
+				$port_position
+			);
+			$port['speed_item_key'] = $this->resolvePortItemKey(
+				$speed_pattern,
+				$mapped_port_index,
+				$wildcard_key_plans['speed_item_key'] ?? [],
+				$port_group,
+				$port_position
+			);
+			$port['speed_item_key_alt'] = $this->resolvePortItemKey(
+				$speed_pattern_alt,
+				$mapped_port_index,
+				$wildcard_key_plans['speed_item_key_alt'] ?? [],
+				$port_group,
+				$port_position
+			);
+			$port['in_errors_item_key'] = $this->resolvePortItemKey(
+				$in_errors_pattern,
+				$mapped_port_index,
+				$wildcard_key_plans['in_errors_item_key'] ?? [],
+				$port_group,
+				$port_position
+			);
+			$port['out_errors_item_key'] = $this->resolvePortItemKey(
+				$out_errors_pattern,
+				$mapped_port_index,
+				$wildcard_key_plans['out_errors_item_key'] ?? [],
+				$port_group,
+				$port_position
+			);
+			$port['in_discards_item_key'] = $this->resolvePortItemKey(
+				$in_discards_pattern,
+				$mapped_port_index,
+				$wildcard_key_plans['in_discards_item_key'] ?? [],
+				$port_group,
+				$port_position
+			);
+			$port['out_discards_item_key'] = $this->resolvePortItemKey(
+				$out_discards_pattern,
+				$mapped_port_index,
+				$wildcard_key_plans['out_discards_item_key'] ?? [],
+				$port_group,
+				$port_position
+			);
 		}
 		unset($port);
 		$traffic_series = $this->loadTrafficSeries($hostid, $ports);
@@ -234,7 +314,7 @@ class WidgetView extends CControllerDashboardWidgetView {
 					$speed_raw = (float) ($speed_values_alt[$speed_key_alt] ?? 0.0);
 				}
 			}
-			$speed_bps = $this->toSpeedBps($speed_raw, $speed_key_used);
+			$speed_bps = $this->toSpeedBps($speed_raw, $speed_unit_mode);
 			$utilization = ($speed_bps > 0.0) ? (($traffic_bps / $speed_bps) * 100.0) : null;
 			$port['utilization_percent'] = $utilization;
 			if ($utilization === null) {
@@ -331,6 +411,7 @@ class WidgetView extends CControllerDashboardWidgetView {
 				'summary_uptime_item_key' => $summary_uptime_item_key,
 				'summary_serial_item_key' => $summary_serial_item_key,
 				'speed_item_pattern' => $speed_pattern,
+				'speed_unit_mode' => $speed_unit_mode,
 				'utilization_overlay_enabled' => $utilization_overlay_enabled,
 				'utilization_low_threshold' => $util_low_threshold,
 				'utilization_warn_threshold' => $util_warn_threshold,
@@ -340,6 +421,8 @@ class WidgetView extends CControllerDashboardWidgetView {
 				'utilization_high_color' => $util_high_color,
 				'utilization_na_color' => $util_na_color,
 				'hostid' => $hostid,
+				'host' => $host_meta,
+				'host_link' => $hostid !== '' ? 'zabbix.php?action=host.view&hostid='.$hostid : '',
 				'legend_size' => $this->clamp(
 					$this->extractPositiveInt($this->fields_values['legend_size'] ?? 14),
 					12,
@@ -716,12 +799,171 @@ class WidgetView extends CControllerDashboardWidgetView {
 		return $pattern;
 	}
 
-	private function resolvePortItemKey(string $pattern, int $port_index): string {
+	private function resolvePortItemKey(
+		string $pattern,
+		int $port_index,
+		array $wildcard_plan = [],
+		string $port_group = 'regular',
+		int $port_position = 0
+	): string {
+		if ($wildcard_plan !== []) {
+			$planned_keys = $wildcard_plan[$port_group] ?? [];
+			if (array_key_exists($port_position, $planned_keys)) {
+				return (string) $planned_keys[$port_position];
+			}
+		}
+
 		if (strpos($pattern, '*') !== false) {
 			return str_replace('*', (string) $port_index, $pattern);
 		}
 
 		return $pattern;
+	}
+
+	private function buildWildcardKeyPlans(
+		string $hostid,
+		array $patterns,
+		array $layout,
+		int $port_index_start,
+		int $sfp_index_start
+	): array {
+		if ($hostid === '') {
+			return [];
+		}
+
+		$regular_port_count = max(0, (int) $layout['total_ports'] - (int) $layout['sfp_ports']);
+		$sfp_port_count = max(0, (int) $layout['sfp_ports']);
+		$result = [];
+
+		foreach ($patterns as $key => $pattern) {
+			if (strpos($pattern, '*') === false) {
+				continue;
+			}
+
+			$result[$key] = $this->buildWildcardKeyPlan(
+				$hostid,
+				(string) $pattern,
+				$regular_port_count,
+				$sfp_port_count,
+				$port_index_start,
+				$sfp_index_start
+			);
+		}
+
+		return $result;
+	}
+
+	private function buildWildcardKeyPlan(
+		string $hostid,
+		string $pattern,
+		int $regular_port_count,
+		int $sfp_port_count,
+		int $port_index_start,
+		int $sfp_index_start
+	): array {
+		$matches = $this->findWildcardMatchingItemKeys($hostid, $pattern);
+		if ($matches === []) {
+			return [];
+		}
+
+		// Explicit SFP start: map Ethernet and SFP from independent index ranges
+		// so SFP indexes may sit before Ethernet (e.g. MikroTik ifIndex order).
+		if ($sfp_port_count > 0 && $sfp_index_start > 0) {
+			$regular_end = $port_index_start + $regular_port_count;
+			$sfp_end = $sfp_index_start + $sfp_port_count;
+			$regular_candidates = [];
+			$sfp_candidates = [];
+
+			foreach ($matches as $index => $key) {
+				if ($index >= $sfp_index_start && $index < $sfp_end) {
+					$sfp_candidates[$index] = $key;
+					continue;
+				}
+
+				if ($index >= $port_index_start && $index < $regular_end) {
+					$regular_candidates[$index] = $key;
+				}
+			}
+
+			ksort($regular_candidates, SORT_NUMERIC);
+			ksort($sfp_candidates, SORT_NUMERIC);
+
+			return [
+				'regular' => array_values($regular_candidates),
+				'sfp' => array_values($sfp_candidates)
+			];
+		}
+
+		// Optional SFP start unset: take SFPs from the sequence after Ethernet ports.
+		$sequence = [];
+		foreach ($matches as $index => $key) {
+			if ($index < $port_index_start) {
+				continue;
+			}
+
+			$sequence[] = $key;
+		}
+
+		$regular_keys = array_slice($sequence, 0, $regular_port_count);
+		$sfp_keys = $sfp_port_count > 0
+			? array_slice($sequence, $regular_port_count, $sfp_port_count)
+			: [];
+
+		return [
+			'regular' => array_values($regular_keys),
+			'sfp' => array_values($sfp_keys)
+		];
+	}
+
+	private function findWildcardMatchingItemKeys(string $hostid, string $pattern): array {
+		$star_pos = strpos($pattern, '*');
+		if ($star_pos === false) {
+			return [];
+		}
+
+		$prefix = substr($pattern, 0, $star_pos);
+		$suffix = substr($pattern, $star_pos + 1);
+		$regex = '/^'.preg_quote($prefix, '/').'(-?\d+)'.preg_quote($suffix, '/').'$/';
+		$result = [];
+
+		foreach ($this->loadHostItemKeys($hostid) as $key) {
+			if (preg_match($regex, $key, $matches) !== 1) {
+				continue;
+			}
+
+			$result[(int) $matches[1]] = $key;
+		}
+
+		if ($result === []) {
+			return [];
+		}
+
+		ksort($result, SORT_NUMERIC);
+
+		return $result;
+	}
+
+	private function loadHostItemKeys(string $hostid): array {
+		if (array_key_exists($hostid, $this->host_item_keys_cache)) {
+			return $this->host_item_keys_cache[$hostid];
+		}
+
+		$rows = API::Item()->get([
+			'output' => ['key_'],
+			'hostids' => [$hostid]
+		]);
+
+		$keys = [];
+		foreach ($rows as $row) {
+			$key = (string) ($row['key_'] ?? '');
+			if ($key !== '') {
+				$keys[] = $key;
+			}
+		}
+
+		$this->host_item_keys_cache[$hostid] = $keys;
+
+		return $keys;
 	}
 
 	private function loadTrafficSeries(string $hostid, array $ports): array {
@@ -1175,13 +1417,13 @@ class WidgetView extends CControllerDashboardWidgetView {
 		return is_numeric($text) ? (float) $text : 0.0;
 	}
 
-	private function toSpeedBps(float $speed_value, string $speed_key): float {
+	private function toSpeedBps(float $speed_value, int $speed_unit_mode): float {
 		if ($speed_value <= 0.0) {
 			return 0.0;
 		}
 
-		// Common pattern: ifHighSpeed is in Mbit/s, ifSpeed is in bit/s.
-		if (stripos($speed_key, 'ifhighspeed') !== false) {
+		// Explicit unit from widget config (same idea as Traffic data unit).
+		if ($speed_unit_mode === self::SPEED_UNIT_MBPS) {
 			return $speed_value * 1000000.0;
 		}
 
@@ -1189,9 +1431,39 @@ class WidgetView extends CControllerDashboardWidgetView {
 	}
 
 	private function extractHostId(): string {
-		$value = $this->fields_values['hostids'] ?? [];
-		$candidates = $this->collectPositiveNumericScalars($value);
-		return $candidates !== [] ? (string) $candidates[0] : '';
+		$host = $this->getResolvedHost();
+		if ($host !== null) {
+			$hostid = trim((string) ($host['hostid'] ?? ''));
+			if ($hostid !== '') {
+				return $hostid;
+			}
+		}
+
+		foreach (['override_hostid', 'hostids'] as $field_name) {
+			if (!array_key_exists($field_name, $this->fields_values)) {
+				continue;
+			}
+
+			$candidates = $this->collectPositiveNumericScalars($this->fields_values[$field_name]);
+			if ($candidates !== []) {
+				return (string) $candidates[0];
+			}
+		}
+
+		return '';
+	}
+
+	private function getResolvedHost(): ?array {
+		if (!method_exists($this, 'getHost')) {
+			return null;
+		}
+
+		$host = $this->getHost();
+		if (!is_array($host) || $host === []) {
+			return null;
+		}
+
+		return $host;
 	}
 
 	private function collectPositiveNumericScalars($value): array {

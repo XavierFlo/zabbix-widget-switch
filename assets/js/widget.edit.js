@@ -33,6 +33,15 @@
 
 	function getHostId() {
 		const selectors = [
+			'input[name="fields[override_hostid][]"]',
+			'input[name^="fields[override_hostid]["]',
+			'input[name="override_hostid[]"]',
+			'input[name^="override_hostid["]',
+			'input[name*="override_hostid"]',
+			'#override_hostid input[type="hidden"]',
+			'#override_hostid_ms input[type="hidden"]',
+			'[id^="override_hostid"] input[type="hidden"]',
+			'[data-name="override_hostid"] input[type="hidden"]',
 			'input[name="fields[hostids][]"]',
 			'input[name^="fields[hostids]["]',
 			'input[name="hostids[]"]',
@@ -55,6 +64,9 @@
 
 		// Fallback: read selected token id in Zabbix multiselect chip list.
 		const tokenSelectors = [
+			'#override_hostid_ms [data-id]',
+			'[id^="override_hostid"] [data-id]',
+			'[data-name="override_hostid"] [data-id]',
 			'#hostids_ms [data-id]',
 			'[id^="hostids"] [data-id]',
 			'[data-name="hostids"] [data-id]'
@@ -113,6 +125,21 @@
 			// eslint-disable-next-line no-console
 			console.warn(`[switch-widget] ${context}`, error);
 		}
+	}
+
+	function getZabbixPhpUrl() {
+		const form = document.getElementById('widget-dialogue-form');
+		if (form && form.action) {
+			const url = new URL(form.action, window.location.href);
+			url.search = '';
+			url.hash = '';
+			return url;
+		}
+
+		const current = new URL(window.location.href);
+		current.search = '';
+		current.hash = '';
+		return current;
 	}
 
 	function getColorFields() {
@@ -252,7 +279,7 @@
 				'Fan item key',
 				'Uptime item key',
 				'Serial item key'
-			], 40, 40);
+			], 60, 60);
 			enforceTextFieldsByLabels(['Brand', 'Model'], 30, 30);
 			enforceTextFieldsByLabels(['Size (%)', 'Rows', 'Ports per row', 'SFP ports'], 6, 4, {numericOnly: true});
 			enforceTextFieldsByLabels(['Port index start', 'SFP index start (optional)'], 8, 6, {numericOnly: true});
@@ -2483,7 +2510,7 @@
 	}
 
 	function fetchItemSuggestions(hostid, query, signal) {
-		const url = new URL('zabbix.php', window.location.origin);
+		const url = getZabbixPhpUrl();
 		url.searchParams.set('action', 'widget.switch.items');
 		url.searchParams.set('output', 'ajax');
 		url.searchParams.set('hostid', hostid);
@@ -2805,7 +2832,7 @@
 	}
 
 	function fetchTriggers(hostid) {
-		const url = new URL('zabbix.php', window.location.origin);
+		const url = getZabbixPhpUrl();
 		url.searchParams.set('action', 'widget.switch.triggers');
 		url.searchParams.set('output', 'ajax');
 		url.searchParams.set('hostid', hostid);
